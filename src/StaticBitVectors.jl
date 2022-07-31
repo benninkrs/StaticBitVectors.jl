@@ -29,7 +29,7 @@ import LinearAlgebra: dot
 import Base.Broadcast: broadcastable, BroadcastStyle, Broadcasted, broadcasted
 
 export AbstractBitVector, StaticBitVector, SBitVector, MBitVector
-export hamming, parity, ⪯, ⪰
+export dot, hamming, parity, ⪯, ⪰
 
 # TODO:	Support for other binary element types
 # TODO:	Support multidimensional arrays?
@@ -66,6 +66,14 @@ const _msk64 = ~UInt64(0)
 	i2 = _mod64(i-1)
 	msk = UInt64(1) << i2
 	return (i1, msk)
+end
+
+@inline function chunk_index(i::Integer, b::Bool)
+	i1 = _div64(i-1)+1
+	i2 = _mod64(i-1)
+	msk = UInt64(1) << i2
+	mskb = b << i2
+	return (i1, msk, mskb)
 end
 
 
@@ -264,7 +272,7 @@ end
 
 
 # setindex! entry point
-function setindex!(bv::MBitVector, val, i)
+@inline function setindex!(bv::MBitVector, val, i)
 	@boundscheck checkbounds(bv, i)
 	_setindex!(bv, val, i)
 end
@@ -272,9 +280,8 @@ end
 
 # Implementation -- assumes bounds have already been checked
 @inline function _setindex!(bv::MBitVector, val, i::Integer)
-	i1, i2 = chunk_index(i)
-	msk = ~(UInt64(1) << i2)
-	@inbounds bv.chunks[i1] = (bv.chunks[i1] & msk) | (Bool(val) << i2)
+	i1, msk, mskb = chunk_index(i, convert(Bool, val))
+	@inbounds bv.chunks[i1] = (bv.chunks[i1] & ~msk) | mskb
 end
 
 
@@ -625,12 +632,10 @@ end
 # BroadcastStyle(::Type{<:StaticBitVector}) = BitVectorStyle()
 
 # Functions for which broadcasting can be done bitwise
-const BitwiseFun = Union{typeof(&), typeof(|), typeof(xor), typeof(~), typeof(nor), typeof(nand)}
-
-
-broadcasted(f, a::StaticBitVector) = bit_map(f, a)
+# const BitwiseFun = Union{typeof(&), typeof(|), typeof(xor), typeof(nor), typeof(nand)}
 
 #  functions that can be broadcasting by recasting in terms of bitwise functions
+broadcasted(::typeof(~), a::StaticBitVector) = bit_map(~, a)
 broadcasted(::typeof(&), a::StaticBitVector, b::StaticBitVector) = bit_broadcast(&, a, b)
 broadcasted(::typeof(|), a::StaticBitVector, b::StaticBitVector) = bit_broadcast(|, a, b)
 broadcasted(::typeof(xor), a::StaticBitVector, b::StaticBitVector) = bit_broadcast(xor, a, b)
@@ -646,7 +651,7 @@ broadcasted(::typeof(>=), a::StaticBitVector, b::StaticBitVector) = bit_broadcas
 broadcasted(::typeof(<), a::StaticBitVector, b::StaticBitVector) = bit_broadcast((x,y) -> y & ~x, a, b)
 broadcasted(::typeof(<=), a::StaticBitVector, b::StaticBitVector) = bit_broadcast((x,y) -> y | ~x, a, b)
 
-function bit_broadcast(f::F, a::StaticBitVector, b::StaticBitVector) where {F<:BitwiseFun}
+function bit_broadcast(f::F, a::StaticBitVector, b::StaticBitVector) where {F}
 	if length(a) == length(b)
 		bit_map(f, a, b)
 	elseif length(a) == 1
