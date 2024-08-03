@@ -55,7 +55,7 @@ end
 const _msk64 = ~UInt64(0)
 @inline _div64(l) = l >> 6
 @inline _mod64(l) = l & 63
-@inline _msk_end(l::Int) = _msk64 >>> _mod64(-l)
+@inline _msk_end(l::Int) = _msk64 >>> unsigned(_mod64(-l))
 
 # the number of chunks needed to store a given number of bits
 @inline nchunks(n::Int) = _div64(n+63)
@@ -176,9 +176,10 @@ SBitVector(b::Bool) = SBitVector((UInt64(b),), 1)
 MBitVector(b::Bool) = MBitVector((UInt64(b),), 1)
 
 # Fallback constructor (from iterable)
-function (::Type{T})(itr) where T<:StaticBitVector
+# Use Union{SBitVector, MBitVector} instead of StaticBitVector beceause the latter shouldn't be allowed
+function (::Type{T})(itr) where T<:Union{SBitVector, MBitVector}
 	chunks = compute_chunks(itr)
-	T(chunks, length(itr))
+	constructor_type(T)(chunks, length(itr))
 end
 
 # Construct all true StaticBitVector
@@ -285,7 +286,7 @@ end
 end
 
 
-@inline _setindex!(b::StaticBitVector, val, i::CartesianIndex{1}) = _setindex!(b, val, i[1])
+@inline _setindex!(b::MBitVector, val, i::CartesianIndex{1}) = _setindex!(b, val, i[1])
 
 function _setindex!(bv::MBitVector, val, itr)
 	for (iv,ib) in enumerate(itr)
@@ -480,7 +481,7 @@ map(::typeof(>), a::StaticBitVector, b::StaticBitVector) = bit_map((x,y) -> x & 
 map(::typeof(>=), a::StaticBitVector, b::StaticBitVector) = bit_map((x,y) -> x | ~y, a, b)
 map(::typeof(<), a::StaticBitVector, b::StaticBitVector) = bit_map((x,y) -> y & ~x, a, b)
 map(::typeof(<=), a::StaticBitVector, b::StaticBitVector) = bit_map((x,y) -> y | ~x, a, b)
-map(::typeof(min), args...) where T = bit_map(&, args...)
+map(::typeof(min), args...) = bit_map(&, args...)
 map(::typeof(max), args...) = bit_map(|, args...)
 
 masked(x::UInt64, ich, nch, msk) = ich < nch ? x : x & msk
@@ -539,16 +540,16 @@ end
 
 # # 2-ary functions
 # function bit_map_old(f::F, a::StaticBitVector{C},  b::StaticBitVector{C}) where {F,C}
-# 	checklengths(a, b)
+# 	# checklengths(a, b)
 # 	len = length(a)
 
 # 	C==0 && return promote_type_args(a,b)((), 0)
 
 # 	chunks = MVector{C,UInt64}(undef)
-# 	for i = 1:C
+# 	@inbounds for i = 1:C
 #    	chunks[i] = f(a.chunks[i], b.chunks[i])
 #    end
-#    chunks[C] &= _msk_end(length(a))
+#    chunks[C] &= _msk_end(len)
 #    promote_type_args(a, b)(Tuple(chunks), len)
 # end
 
@@ -581,7 +582,7 @@ map!(::typeof(>), dest::MBitVector, a::StaticBitVector, b::StaticBitVector) = bi
 map!(::typeof(>=), dest::MBitVector, a::StaticBitVector, b::StaticBitVector) = bit_map!((x,y) -> x | ~y, dest, a, b)
 map!(::typeof(<), dest::MBitVector, a::StaticBitVector, b::StaticBitVector) = bit_map!((x,y) -> y & ~x, dest, a, b)
 map!(::typeof(<=), dest::MBitVector, a::StaticBitVector, b::StaticBitVector) = bit_map!((x,y) -> y | ~x, dest, a, b)
-map!(::typeof(min), dest::MBitVector, args::StaticBitVector...) where T = bit_map!(&, dest, args...)
+map!(::typeof(min), dest::MBitVector, args::StaticBitVector...) = bit_map!(&, dest, args...)
 map!(::typeof(max), dest::MBitVector, args::StaticBitVector...) = bit_map!(|, dest, args...)
 
 

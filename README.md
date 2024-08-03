@@ -1,5 +1,5 @@
 # StaticBitVectors.jl
-Stack-allocated, dense-packed bit vectors. (Much like `BitVector`, but using `StaticVector`s for storage instead of heap-allocated vectors.)  By exploiting local storage and whole-word CPU operations on dense-packed bits, bitwise operations on static bit vectors can often be performed significantly faster than on other vector-of-Bool types.
+Bit vectors backed by `StaticVector`s. By exploiting local storage and whole-word CPU operations on dense-packed bits, bitwise operations on static bit vectors can often be performed significantly faster than on other vector-of-Bool types.
 
 ## Installation
 ```
