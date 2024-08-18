@@ -31,18 +31,25 @@ import Base: trues, falses, vcat
 import Base: map, map!		#, bit_map!
 import Base: count, sum
 import Base: +, -, *, /, ==, ~, &, |, xor, nor, nand, cmp
+import Base: vcat, hcat
 import LinearAlgebra: dot
 import Base.Broadcast: broadcastable, BroadcastStyle, Broadcasted, broadcasted
 
-export AbstractBitVector, SBitCol, MBitCol, SBitRow, MBitRow, BitCol, BitRow, BitVec
+export BitCol, SBitCol, MBitCol, VBitCol, BitRow, SBitRow, MBitRow, VBitRow
 export dot, hamming, parity, ⪯, ⪰
+export backingtype
+export StaticArrays
 
+# See if this helps with compilation time
+# Base.@propagate_inbounds Base.@constprop :none function getindex(v::SArray, i::Int)
+# 	getfield(v,:data)[i]
+# end
 
 include("utils.jl")
 include("types.jl")
 include("indexing.jl")
 include("ops.jl")
-include("broadcast.jl")
+# include("broadcast.jl")
 
 
 end	# module
