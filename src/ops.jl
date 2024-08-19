@@ -110,7 +110,7 @@ checkorientation(a::BitVec, b::BitVec) = throw(DimensionMismatch("Arguments must
 # These are redundant with bit_map and broadcasting, but are faster.
 # Arguments must have the same size (length and orientation)
 (~)(a::BitVec) = bit_map(~, a)
-(&)(a::BitVec, b::BitVec) = begin checkorientation(a,b); bit_map(&, a, b); end
+ (&)(a::BitVec, b::BitVec) = begin checkorientation(a,b); bit_map(&, a, b); end
 (|)(a::BitVec, b::BitVec) = begin checkorientation(a,b); bit_map(|, a, b); end
 xor(a::BitVec, b::BitVec) = begin checkorientation(a,b); bit_map(xor, a, b); end
 nor(a::BitVec, b::BitVec) = begin checkorientation(a,b); bit_map(nor, a, b); end
@@ -118,6 +118,9 @@ nand(a::BitVec, b::BitVec) = begin checkorientation(a,b); bit_map(nand, a, b); e
 
 
 # Efficient versions of map and map! for boolean functions.
+# Inlining the 2-argument functions (and 2-arg bit_map below) makes them about
+# 30% faster for nchunks >= 66, but could conceivably cause memory bloat.
+# Inlining seems to have no effect on 1-arg map
 map(::Union{typeof(~), typeof(!)}, a::BitVec) = bit_map(~, a)
 map(::Union{typeof(&), typeof(min)}, a::BitVec, b::BitVec) = bit_map(&, a, b)
 map(::Union{typeof(|), typeof(max)}, a::BitVec, b::BitVec) = bit_map(|, a, b)
@@ -139,8 +142,27 @@ map(::typeof(max), args...) = bit_map(|, args...)
 
 
 
-# 1-ary functions
-@inline function bit_map(f::F, a::BitVec) where {F<:Function}
+## 1-ary functions
+
+# Default - VBitCol, VBitRow
+function bit_map(f::F, a::BitVec) where {F<:Function}
+	nch = nchunks(a)
+	nch==0 && return typeof(a)(UInt64[], 0)
+
+	len = length(a)
+
+	chunks_ = Vector{UInt64}(undef, nch)
+	for i = 1:nch
+	 	@inbounds chunks_[i] = f(chunks(a)[i])
+	end
+	@inbounds chunks_[nch] &= _msk_end(len)
+
+	typeof(a)(chunks_, len)
+end
+
+
+# Specialized for static-based 
+function bit_map(f::F, a::SMBitVec) where {F<:Function}
 	nch = nchunks(a)
 	nch==0 && return typeof(a)((), 0)
 
@@ -148,47 +170,81 @@ map(::typeof(max), args...) = bit_map(|, args...)
 	msk = _msk_end(len)
 
 	masked(v,i) = i<nch ? v : v & msk
-
 	chunkfun = Base.@constprop :none @inbounds i -> masked(f(chunks(a)[i]), i)
-	typeof(a)(chunkfun, len)
+
+	chunks_ = ntuple(chunkfun, Val(nch))
+	typeof(a)(chunks_, len)
+	# SBitCol(chunks_, len)
 end
 
 
-# @inline function bit_map_old(f::F, a::SMBitVec{nch}) where {nch,F}
-# 	# nch = nchunks(a)
-# 	nch == 0 && return typeof(a)((), 0)
 
-# 	len = length(a)
-# 	cha = chunks(a);
-# 	msk = _msk_end(len)
-# 	chunkfun = Base.@constprop :none i -> i<C ? f(@inbounds cha[i]) : f(@inbounds cha[i]) & msk
-# 	chunks_ = chunkstype(a)(ntuple(chunkfun, Val(nch)))
-#    promote_type(typeof(a))(chunks_, len)
-# end
+## 2-ary functions
 
-
-# 2-ary functions
-@inline function bit_map(f::F, a::BitVec,  b::BitVec) where {F<:Function}
+# Default - VBitCol, VBitRow
+function bit_map(f::F, a::BitVec,  b::BitVec) where {F<:Function}
 	checklengths(a, b)
 	nch = nchunks(a)
 	outtype = promote_typeof(a,b)
-	# println(outtype)
+
+	nch==0 && return outtype(UInt64[], 0)
+
+	len = length(a)
+
+	chunks_ = Vector{UInt64}(undef, nch)
+	for i = 1:nch
+		@inbounds chunks_[i] = f(chunks(a)[i], chunks(b)[i])
+	end
+	@inbounds chunks_[nch] &= _msk_end(len)
+
+	outtype(chunks_, len)
+end
+
+
+# Specialized for static-based 
+function bit_map(f::F, a::SMBitVec,  b::SMBitVec) where {F<:Function}
+	checklengths(a, b)
+	nch = nchunks(a)
+	outtype = promote_typeof(a,b)
+
 	nch==0 && return outtype((), 0)
 
 	len = length(a)
 	msk = _msk_end(len)
 
 	masked(v,i) = i<nch ? v : v & msk
-
 	chunkfun = Base.@constprop :none @inbounds i -> masked(f(chunks(a)[i], chunks(b)[i]), i)
-	outtype(chunkfun, len)
+	chunks_ = ntuple(chunkfun, Val(nch))
+	outtype(chunks_, len)
 end
 
 
-# n-ary functions
-@inline function bit_map(f::F, args::BitVec...) where {F<:Function}
+
+##  n-ary functions
+
+# Default - VBitCol, VBitRow
+function bit_map(f::F, args::BitVec...) where {F<:Function}
 	checklengths(args...)
-	nch = nchunks(a)
+	nch = nchunks(args[1])
+	outtype = promote_typeof(args...)
+	
+	nch==0 && return outtype(UInt64[], 0)
+
+	len = length(args[1])
+
+	chunks_ = Vector{UInt64}(undef, nch)
+	for i = 1:nch
+		@inbounds chunks_[i] = f((chunks(arg)[i] for arg in args)...)
+	end
+	@inbounds chunks_[nch] &= _msk_end(len)
+	outtype(chunks_, len)
+end
+
+
+# Specialized for static-based 
+function bit_map(f::F, args::SMBitVec...) where {F<:Function}
+	checklengths(args...)
+	nch = nchunks(args[1])
 	outtype = promote_typeof(args...)
 	nch==0 && return outtype((), 0)
 
@@ -196,10 +252,9 @@ end
 	msk = _msk_end(len)
 
 	masked(v,i) = i<nch ? v : v & msk
-
 	chunkfun = Base.@constprop :none @inbounds i -> masked(f((chunks(arg)[i] for arg in args)...), i)
-	# chunkf = i -> masked(f( (@inbounds chunks(arg)[i] for arg in args)...), i, C, _msk_end(len))
-   outtype(chunkfun, len)
+   chunks_ = ntuple(chunkfun, Val(nch))
+	outtype(chunks_, len)
 end
 
 
@@ -245,7 +300,7 @@ end
 # end
 
 
-
+# It is ok for dest to alias one of the input args.
 map!(::Union{typeof(~), typeof(!)}, dest::MBitVec, a::BitVec) = bit_map!(~, dest, a)
 map!(::Union{typeof(&), typeof(*), typeof(min)}, dest::MBitVec, a::BitVec, b::BitVec) = bit_map!(&, dest, a, b)
 map!(::Union{typeof(|), typeof(max)}, dest::MBitCol, a::BitVec, b::BitVec) = bit_map!(|, dest, a, b)
@@ -264,10 +319,10 @@ map!(::typeof(min), dest::MBitVec, args::BitVec...) = bit_map!(&, dest, args...)
 map!(::typeof(max), dest::MBitVec, args::BitVec...) = bit_map!(|, dest, args...)
 
 
-# TODO:  These are much slower than bit_map
+# TODO:  Are these slower than bit_map?
 
 # 1-ary functions
-@inline function bit_map!(f::F, dest::BitVec, a::BitVec) where {F<:Function}
+function bit_map!(f::F, dest::Union{MBitVec, VBitVec}, a::BitVec) where {F<:Function}
 	checklengths(dest, a)
 	nch = nchunks(dest)
 	@inbounds for i = 1:nch
@@ -279,7 +334,7 @@ end
 
 
 # 2-ary functions
-@inline function bit_map!(f::F, dest::BitVec, a::BitVec, b::BitVec) where {F<:Function}
+function bit_map!(f::F, dest::Union{MBitVec, VBitVec}, a::BitVec, b::BitVec) where {F<:Function}
 	checklengths(dest, a, b)
 	nch = nchunks(dest)
 	@inbounds for i = 1:nch
@@ -293,11 +348,11 @@ end
 
 
 # n-ary functions
-function bit_map!(f::F, dest::MBitVec{C}, args::BitVec{C}...) where {F<:Function,C}
+function bit_map!(f::F, dest::Union{MBitVec, VBitVec}, args::BitVec...) where {F<:Function}
 	checklengths(dest, args...)
 	nch = nchunks(dest)
-	@inbounds for i = 1:C
-   	chunks(dest)[i] =  @inbounds f(chunks(a)[i], chunks(b)[i])
+	@inbounds for i = 1:nch
+   	chunks(dest)[i] =  @inbounds f((chunks(arg)[i] for arg in args)...)
    end
 	@inbounds chunks(dest)[nch] &= _msk_end(length(dest))
 	dest

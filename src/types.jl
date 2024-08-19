@@ -32,12 +32,12 @@ struct BitCol{VT<:AbstractVector{UInt64}} <: AbstractVector{Bool}
 	chunks::VT
 	len::Int
 	# default constructor
-	function BitCol{VT}(chunks::VT, len) where {VT}
+	function BitCol{VT}(chunks::VT, len) where {VT<:AbstractVector{UInt64}}
 		nchunks(len) == length(chunks) || error("Require length(chunks) == len >> 6")
 		new{VT}(chunks, len)
 	end
 	# type-inferred constructor
-	BitCol(chunks::VT, len) where {VT} = BitCol{VT}(chunks, len)
+	BitCol(chunks::VT, len) where {VT<:AbstractVector{UInt64}} = BitCol{VT}(chunks, len)
 
 end
 
@@ -70,20 +70,19 @@ See also [[`BitCol`](@ref).
 const BitRow{VT} = Adjoint{Bool, BitCol{VT}}
 const SBitRow{C} = BitRow{SVector{C,UInt64}}
 const MBitRow{C} = BitRow{MVector{C,UInt64}}
+const SMBitRow{C} = Union{SBitRow{C}, MBitRow{C}}
 const VBitRow = BitRow{Vector{UInt64}}
 
+# Core constructors
+Adjoint{Bool, BT}(b::BT) where {BT<:BitCol} = invoke(Adjoint{Bool, BT}, Tuple{Any}, b)
 
 # Construct directly from chunks
-# BitRow{VT}(ch::VT, len) where {VT} = BitCol{VT}(ch, len)'
-# # Construct directly from chunks (type inferred)
-# BitRow(ch::VT, len) where {VT} = BitRow{VT}(ch, len) 
+BitRow{VT}(ch::VT, len) where {VT <: AbstractVector{UInt64}} = BitCol{VT}(ch, len)'
+# type inferred
+BitRow(ch::VT, len) where {VT <: AbstractVector{UInt64}} = BitCol{VT}(ch, len)'
+SBitRow(ch::SVector{C,UInt64}, len) where {C} = SBitCol{C}(ch, len)'
+MBitRow(ch::MVector{C,UInt64}, len) where {C} = MBitCol{C}(ch, len)'
 
-# Adjoint{Bool, BT}(bt::BT) where {BT <: BitCol} = invoke(Adjoint{Bool, BT}, Tuple{Any}, bt)
-# This is problematic -- it will overshadow Base.Adjoint constructor
-#(bt::Type{<:BitRow})(args...) = coltype(bt)(args...)'
-# SBitRow(args...) = SBitCol(args...)'
-# MBitRow(args...) = MBitCol(args...)'
-# VBitRow(args...) = VBitCol(args...)'
 
 
 # Various useful type groups
@@ -146,46 +145,41 @@ axes(b::BitRow) = (Base.OneTo(1),Base.OneTo(length(b)),)
 # Constructors
 #
 
-# This is needed to prevent recursion in the case the core constructor happens to
-# match other constructors defined later.
-Adjoint{Bool, BT}(b::BT) where {BT<:BitCol} = invoke(Adjoint{Bool, BT}, Tuple{Any}, b)
-
-# Construct static vector types from tuple chunks
-# SBitCol(t::Tuple{Vararg{UInt64}}, len) = BitCol(SVector(t), len)
-# MBitCol(t::Tuple{Vararg{UInt64}}, len) = BitCol(MVector(t), len)
-# (bt::Type{<:BitRow})(t::Tuple{Vararg{UInt64}}, len) = coltype(bt)(t, len)'
-
 # Helper constructor - construct from function that returns chunk elements
-@inline function SBitCol{C}(f::F, len) where {C,F<:Function}
-	chunks = SVector(ntuple(f, Val(C)))
-	BitCol(chunks, len)
-end
+# @inline function SBitCol{C}(f::F, len) where {C,F<:Function}
+# 	chunks_ = SVector(ntuple(f, Val(C)))
+# 	BitCol(chunks_, len)
+# end
 
-@inline function MBitCol{C}(f::F, len) where {C,F<:Function}
-	chunks = MVector(ntuple(f, Val(C)))
-	BitCol(chunks, len)
-end
+# @inline function MBitCol{C}(f::F, len) where {C,F<:Function}
+# 	chunks_ = MVector(ntuple(f, Val(C)))
+# 	BitCol(chunks_, len)
+# end
 
-@inline function BitCol{VT}(f::F, len) where {VT,F<:Function}
-	chunks = UInt64[f(i) for i in 1:nchunks(len)]
-	BitCol(chunks, len)
-end
+# @inline function BitCol{VT}(f::F, len) where {VT,F<:Function}
+# 	chunks_ = UInt64[f(i) for i in 1:nchunks(len)]
+# 	# chunks_ = Vector{UInt64}(undef, nchunks(len))
+# 	# for i in 1:nchunks(len)
+# 	# 	@inbounds chunks_[i] = f(i)
+# 	# end
+# 	BitCol(chunks_, len)
+# end
 
-@inline function SBitRow{C}(f::F, len) where {C,F<:Function}
-	chunks = SVector(ntuple(f, Val(C)))
-	b = BitCol(chunks, len)'
-	# Adjoint{Bool, typeof(b)}(b)
-end
+# @inline function SBitRow{C}(f::F, len) where {C,F<:Function}
+# 	chunks_ = SVector(ntuple(f, Val(C)))
+# 	b = BitCol(chunks_, len)'
+# 	# Adjoint{Bool, typeof(b)}(b)
+# end
 
-@inline function MBitRow{C}(f::F, len) where {C,F<:Function}
-	chunks = MVector(ntuple(f, Val(C)))
-	BitCol(chunks, len)'
-end
+# @inline function MBitRow{C}(f::F, len) where {C,F<:Function}
+# 	chunks_ = MVector(ntuple(f, Val(C)))
+# 	BitCol(chunks_, len)'
+# end
 
-@inline function BitRow{VT}(f::F, len) where {VT,F<:Function}
-	chunks = UInt64[f(i) for i in 1:nchunks(len)]
-	BitCol(chunks, len)'
-end
+# @inline function BitRow{VT}(f::F, len) where {VT,F<:Function}
+# 	chunks_ = UInt64[f(i) for i in 1:nchunks(len)]
+# 	BitCol(chunks_, len)'
+# end
 
 
 # MBitCol(t::Tuple{Vararg{UInt64}}, len) = BitCol(MVector(t), len)
@@ -202,6 +196,19 @@ end
 # (::Type{BT})() where {BT <: BitCol{VT}} where {VT} = println("It works! $VT")	 # doesn't match SBitCol
 # (::Type{BT})() where {BT <: BitCol{VT} where {VT}} = println("It works! $VT")	 # VT not available in function body
 # (::Type{BT})() where {BT <: BitCol{SV{C}} where {C}} where {SV} = println("It works! $SV")	
+
+
+# construct from Tuples
+SBitCol(t::NTuple{C,UInt64}, len) where {C} = BitCol(SVector{C,UInt64}(t), len) 
+MBitCol(t::NTuple{C,UInt64}, len) where {C} = BitCol(MVector{C,UInt64}(t), len) 
+SBitCol{C}(t::NTuple{C,UInt64}, len) where {C} = BitCol(SVector{C,UInt64}(t), len) 
+MBitCol{C}(t::NTuple{C,UInt64}, len) where {C} = BitCol(MVector{C,UInt64}(t), len) 
+
+SBitRow(t::NTuple{C,UInt64}, len) where {C} = BitCol(SVector{C,UInt64}(t), len)'
+MBitRow(t::NTuple{C,UInt64}, len) where {C} = BitCol(MVector{C,UInt64}(t), len)'
+SBitRow{C}(t::NTuple{C,UInt64}, len) where {C} = BitCol(SVector{C,UInt64}(t), len)'
+MBitRow{C}(t::NTuple{C,UInt64}, len) where {C} = BitCol(MVector{C,UInt64}(t), len)'
+
 
 
 # consruct from BitVectors
@@ -235,13 +242,17 @@ end
 
 
 # Construct all true BitCol
-function trues(::Type{T}, len) where {T<:BitCol}
+trues(::Type{T}, len) where {T <: SMBitCol} = trues(T{nchunks(len)}, len)
+function trues(::Type{T}, len) where {T<:SMBitCol{C}} where {C}
 	chunkfun = i-> i<nchunks(len) ? _msk64 : _msk_end(len)
-	T(chunkfun, len)
+	chunks_ = chunkstype(T)(ntuple(chunkfun, C))
+	T(chunks_, len)
 end
 
-# For SBitCol and MBitCol, add chunk length to type (also serves as function barrier)
-trues(T::Union{Type{SBitCol}, Type{MBitCol}}, len) = trues(T{nchunks(len)}, len)
+function trues(::Type{T}, len) where {T<:BitCol}
+	chunks_ = fill(_msk64, nchunks(len))
+	T(chunks_, len)
+end
 
 # BitRow
 trues(::Type{T}, len) where {T<:BitRow} = trues(coltype(T), len)'
@@ -249,13 +260,17 @@ trues(::Type{T}, len) where {T<:BitRow} = trues(coltype(T), len)'
 
 
 # Construct all false BitCol
-function falses(::Type{T}, len) where {T<:BitCol}
+falses(::Type{T}, len) where {T <: SMBitCol} = falses(T{nchunks(len)}, len)
+function falses(::Type{T}, len) where {T<:SMBitCol{C}} where {C}
 	chunkfun = i-> UInt64(0)
-	T(chunkfun, len)
+	chunks_ = chunkstype(T)(ntuple(chunkfun, C))
+	T(chunks_, len)
 end
 
-# For SBitCol and MBitCol, add chunk length to type
-falses(T::Union{Type{SBitCol}, Type{MBitCol}}, len) = falses(T{nchunks(len)}, len)
+function falses(::Type{T}, len) where {T<:BitCol}
+	chunks_ = fill(UInt64(0), nchunks(len))
+	T(chunks_, len)
+end
 
 # BitRow
 falses(::Type{T}, len) where {T<:BitRow} = falses(coltype(T), len)'
@@ -286,8 +301,7 @@ promote_rule(::Type{<:MBitRow}, ::Type{<:VBitRow}) = MBitRow
 promote_rule(::Type{<:SBitRow{C}}, ::Type{<:MBitRow{C}}) where {C} = SBitRow{C}
 promote_rule(::Type{<:MBitRow{C}}, ::Type{<:VBitRow}) where {C} = MBitRow{C}
 
-promote_rule(t1::Type{<:BitCol}, t2::Type{<:BitRow}) = promote_rule(t1, coltype(t2))
-
+promote_rule(t1::Type{<:BitCol}, t2::Type{<:BitRow}) = promote_type(t1, coltype(t2))
 
 # promote_rule(::Type{<:SMBitCol{C}}, ::Type{<:SMBitCol{C}}) where {C} = SBitCol{C}
 # promote_rule(::Type{<:SMBitRow{C}}, ::Type{<:SMBitRow{C}}) where {C} = SBitRow{C}
